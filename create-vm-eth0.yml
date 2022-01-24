@@ -1,0 +1,199 @@
+---
+- name: Define VM
+  hosts: localhost
+
+  vars:
+    rootVg:      vg_system
+    vmName:      foreman-8
+    autoStart:   true
+    memoryUnit:  MiB
+    memory:      12288
+    maxMemory:   16384
+    vcpu:        2
+    maxVcpus:    4
+    arch:        x86_64
+    centosVer:   8
+    osImage:     /vms/software/CentOS-8.4.2105-x86_64-dvd1.iso
+    poolLoc:     /virt
+    ksLoc:       /var/www/html
+    boot_dev:
+    - cdrom
+    - hd
+    bootMenu:    yes
+    diskFile:    /virt2/{{ vmName }}.qcow2
+    diskType:    qcow2
+    diskSize:    180
+    targetDev:   vda
+    interfaceType: bridge
+    macAddress:  52:54:00:a3:f8:33
+    bridge: br0
+    bridgeType: virtio
+
+    vcKeymap:   gb
+    xLayouts:   gb
+    lang:       en_GB.UTF-8
+    netDevice:  eth0
+    netIp:      199.231.184.59
+    netMask:    255.255.255.0
+    gateWay:    199.231.184.57
+    nameServer: 66.45.228.79,8.8.4.4
+    hostName:   "{{ vmName }}.cloudboxservices.com"
+
+    #maxMemory:  8388608
+    #memory:     4194304
+    #memoryUnit: KiB
+
+    firewall:
+      - name:    ssh
+        type:    service
+      - name:    http
+        type:    service
+      - name:    https
+        type:    service
+      - name:    kerberos
+        type:    service
+      - name:    mountd
+        type:    service
+      - name:    nfs
+        type:    service
+      - name:    rpc-bind
+        type:    service
+      - name:    3306
+        type:    port
+
+    logvol:
+      - name:    /
+        fstype:  xfs
+        lvname:  lv_root
+        vgname:  vg_system
+        lvsize:  1024
+
+      - name:    swap
+        fstype:  swap
+        lvname:  lv_swap
+        vgname:  vg_system
+        lvsize:  2048
+
+      - name:    /home
+        fstype:  xfs
+        lvname:  lv_home
+        vgname:  vg_system
+        lvsize:  1024
+        fsoptions: "nodev"
+
+      - name:    /opt
+        fstype:  xfs
+        lvname:  lv_opt
+        vgname:  vg_system
+        lvsize:  3072
+        fsoptions: "nodev,nosuid"
+
+      - name:    /tmp
+        fstype:  xfs
+        lvname:  lv_tmp
+        vgname:  vg_system
+        lvsize:  1024
+        fsoptions: "nodev,nosuid"
+
+      - name:    /usr
+        fstype:  xfs
+        lvname:  lv_usr
+        vgname:  vg_system
+        lvsize:  4096
+        fsoptions: "nodev"
+
+      - name:    /var
+        fstype:  xfs
+        lvname:  lv_var
+        vgname:  vg_system
+        lvsize:  81920
+
+      - name:    /var/log
+        fstype:  xfs
+        lvname:  lv_log
+        vgname:  vg_system
+        lvsize:  1024
+        fsoptions: "nodev,nosuid,noexec"
+
+      - name:    /var/log/audit
+        fstype:  xfs
+        lvname:  lv_audit
+        vgname:  vg_system
+        lvsize:  1024
+        fsoptions: "nodev,nosuid,noexec"
+
+  tasks:
+
+  - name: Copy kickstart file to HTTP server
+    template:
+      src:      templates/kickstart.j2
+      dest:     "{{ ksLoc }}/{{ vmName }}.ks"
+      owner:    root
+      group:    root
+      mode:     "0644"
+      setype:   httpd_sys_content_t
+
+  - name: get list of VMs
+    virt:
+      command: "list_vms"
+    register: vms 
+
+  - name: Ensure VM {{ vmName }} is destroyed
+    virt:
+      name:     "{{ vmName }}"
+      state:    destroyed
+    when: vmName in vms.list_vms
+
+  - name: UnDefine VM {{ vmName }}
+    virt:
+      command:  undefine
+      name:     "{{ vmName }}"
+    when: vmName in vms.list_vms
+
+  - name: Define and build VM {{ vmName }}
+    shell: |
+           echo "virt-install --name={{ vmName }} --memory {{ memory }},maxmemory={{ maxMemory }} --vcpus {{ vcpu }},maxvcpus={{ maxVcpus }} \
+           --disk {{ poolLoc }}/{{ vmName }}.qcow2,size={{ diskSize }} \
+           --os-variant=centos{{ centosVer }} --os-type linux \
+           --network=bridge=br0,model=virtio,driver.iommu=on --graphics none \
+           --console pty,target_type=serial \
+           --location {{ osImage }} \
+           --install kernel_args_overwrite=yes \
+           --rng /dev/random,driver.iommu=on --graphics none \
+           --initrd-inject={{ ksLoc }}/{{ vmName }}.ks \
+           --extra-args='ks=file:/{{ vmName }}.ks console=ttyS0,115200n8 serial net.ifnames=0 biosdevname=0' \
+           --boot cdrom,hd,menu=on --accelerate" > /tmp/x
+
+           virt-install --name={{ vmName }} --memory {{ memory }},maxmemory={{ maxMemory }} --vcpus {{ vcpu }},maxvcpus={{ maxVcpus }} \
+           --disk {{ poolLoc }}/{{ vmName }}.qcow2,size={{ diskSize }} \
+           --os-variant=centos{{ centosVer }} --os-type linux \
+           --network=bridge=br0,model=virtio,driver.iommu=on --graphics none \
+           --console pty,target_type=serial \
+           --location {{ osImage }} \
+           --install kernel_args_overwrite=yes \
+           --rng /dev/random,driver.iommu=on --graphics none \
+           --initrd-inject={{ ksLoc }}/{{ vmName }}.ks \
+           --extra-args="ks=file:/{{ vmName }}.ks console=ttyS0,115200n8 serial net.ifnames=0 biosdevname=0" \
+           --boot cdrom,hd,menu=on --accelerate
+
+  - name: Start VM {{ vmName }}
+    virt:
+      name: "{{ vmName }}"
+      state: running
+      autostart: "{{ autostart | default(false) }}"
+      # uri: 'qemu:///'
+
+  - name: Show VM {{ vmName }} status
+    virt:
+      command: status
+      name: "{{ vmName }}"
+
+  - name: Show VM info (requires -v)
+    virt:
+      command: info
+      name: "{{ vmName }}"
+
+  - name: Show VM info (requires -v)
+    debug:
+      msg: Enter virsh console {{ vmName }} to monitor the progress of the install
+...
